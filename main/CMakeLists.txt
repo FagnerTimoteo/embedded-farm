@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "hx711.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        driver
+        esp_timer
+        nvs_flash
+        esp_event
+        esp_netif
+        esp_wifi
+        mqtt
+        esp_adc
+)

@@ -1,0 +1,6 @@
+build/
+managed_components/
+.vscode/
+.devcontainer/
+dependencies.lock
+.clangd
