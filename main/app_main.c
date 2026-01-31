@@ -37,7 +37,7 @@ static int dht11_read(float *temperature, float *humidity);
 
 // Defines
 #define TAG "GRANJA"
-#define BROKER_URI "mqtt://192.168.2.164:1883"
+#define BROKER_URI "mqtt://10.88.172.133:1883"
 #define WIFI_SSID "Open wrt"
 #define WIFI_PASS "12345678"    
 #define PUMP_MAX_ON_TIME_SEC  10   // 10 segundos
@@ -52,6 +52,8 @@ static int64_t pump_on_timestamp = 0;
 static bool pump_timeout_alert_sent = false;
 static volatile bool boia_acionada = false;
 static SemaphoreHandle_t boia_sem;
+static bool mqtt_started = false;
+static bool mqtt_connected = false;
 
 // Pinos
 // Sensores
@@ -189,9 +191,15 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
 
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT CONECTADO");
+            mqtt_connected = true;
             esp_mqtt_client_subscribe(event->client, "granja/config", 0);
             esp_mqtt_client_subscribe(event->client, "granja/manual", 0);
-            esp_mqtt_client_subscribe(event->client, "granja/mode", 0); // receber comandos de modo
+            esp_mqtt_client_subscribe(event->client, "granja/mode", 0);
+            break;
+
+        case MQTT_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG, "MQTT DESCONECTADO");
+            mqtt_connected = false;
             break;
 
         case MQTT_EVENT_DATA: {
@@ -758,9 +766,8 @@ static void sensor_task(void *pv) {
     }
 }
 
-void connect_wifi(void) {
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
+void connect_wifi(void)
+{
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -779,15 +786,58 @@ void connect_wifi(void) {
 }
 
 
+static void wifi_event_handler(void *arg,
+    esp_event_base_t event_base,
+    int32_t event_id,
+    void *event_data)
+{
+if (event_base == WIFI_EVENT &&
+event_id == WIFI_EVENT_STA_START) {
+esp_wifi_connect();
+}
+
+if (event_base == IP_EVENT &&
+event_id == IP_EVENT_STA_GOT_IP) {
+
+ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+ESP_LOGI("WIFI", "IP obtido: " IPSTR, IP2STR(&event->ip_info.ip));
+
+if (!mqtt_started) {
+    ESP_LOGI("MQTT", "Iniciando MQTT");
+    esp_mqtt_client_start(mqtt_client);
+    mqtt_started = true;
+}
+}
+
+if (event_base == WIFI_EVENT &&
+event_id == WIFI_EVENT_STA_DISCONNECTED) {
+ESP_LOGW("WIFI", "WiFi desconectado, reconectando...");
+esp_wifi_connect();
+}
+}
+
 // Main
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    // Registrar handlers
+    ESP_ERROR_CHECK(esp_event_handler_register(
+        WIFI_EVENT,
+        ESP_EVENT_ANY_ID,
+        &wifi_event_handler,
+        NULL
+    ));
+
+    ESP_ERROR_CHECK(esp_event_handler_register(
+        IP_EVENT,
+        IP_EVENT_STA_GOT_IP,
+        &wifi_event_handler,
+        NULL
+    ));
+
     connect_wifi();
-
-    init_time();
-
     // MQTT
     esp_mqtt_client_config_t cfg = {
         .broker.address.uri = BROKER_URI
@@ -800,8 +850,6 @@ void app_main(void) {
         mqtt_event_handler,
         NULL
     );
-
-    esp_mqtt_client_start(mqtt_client);
 
     // Mutex DHT11
     dht_mutex = xSemaphoreCreateMutex();
