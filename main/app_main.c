@@ -37,10 +37,11 @@ static int dht11_read(float *temperature, float *humidity);
 
 // Defines
 #define TAG "GRANJA"
-#define BROKER_URI "mqtt://10.88.172.133:1883"
-#define WIFI_SSID "Open wrt"
-#define WIFI_PASS "12345678"    
+#define BROKER_URI "mqtt://192.168.2.164:1883"
+#define WIFI_SSID "EspIdfWrt"
+#define WIFI_PASS "12345678"
 #define PUMP_MAX_ON_TIME_SEC  10   // 10 segundos
+#define HX_SAMPLES 10
 
 // Variáveis globais
 static hx711_t balanca;
@@ -54,6 +55,9 @@ static volatile bool boia_acionada = false;
 static SemaphoreHandle_t boia_sem;
 static bool mqtt_started = false;
 static bool mqtt_connected = false;
+static float hx_buffer[HX_SAMPLES];
+static int hx_index = 0;
+static bool hx_full = false;
 
 // Pinos
 // Sensores
@@ -156,6 +160,38 @@ void init_time(void) {
     esp_sntp_init();
 }
 
+float hx711_filtered_read(hx711_t *hx)
+{
+    const int N = 15;
+    float samples[N];
+
+    for (int i = 0; i < N; i++) {
+        samples[i] = hx711_get_units(hx, 1);
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    // ordenar (bubble simples)
+    for (int i = 0; i < N - 1; i++) {
+        for (int j = 0; j < N - i - 1; j++) {
+            if (samples[j] > samples[j + 1]) {
+                float t = samples[j];
+                samples[j] = samples[j + 1];
+                samples[j + 1] = t;
+            }
+        }
+    }
+
+    // descarta extremos (3 menores + 3 maiores)
+    float sum = 0;
+    int count = 0;
+
+    for (int i = 3; i < N - 3; i++) {
+        sum += samples[i];
+        count++;
+    }
+
+    return (sum / count) * 1000.0f;
+}
 
 // Manual
 static void handle_manual_command(const char *payload) {
@@ -704,7 +740,11 @@ static void sensor_task(void *pv) {
 
     while (1) {
         // -------- HX711 --------
-        float weight = hx711_get_units(&balanca, 10) * 1000.0f; // em gramas
+        float weight = hx711_filtered_read(&balanca);
+        if (fabs(weight) < 2.0f)
+            weight = 0;
+        if (abs(weight) < 2)
+            hx711_tare(&balanca, 10);
         check_ration_alert(weight);
         ESP_LOGI(TAG, "Peso: %.2f g", weight);
 
