@@ -45,6 +45,9 @@ static int dht11_read(float *temperature, float *humidity);
 
 // Variáveis globais
 static hx711_t balanca;
+static float hx_filtered = 0;
+static bool hx_initialized = false;
+
 static bool fan_on = false;
 static bool light_on = false;
 
@@ -55,9 +58,6 @@ static volatile bool boia_acionada = false;
 static SemaphoreHandle_t boia_sem;
 static bool mqtt_started = false;
 static bool mqtt_connected = false;
-static float hx_buffer[HX_SAMPLES];
-static int hx_index = 0;
-static bool hx_full = false;
 
 // Pinos
 // Sensores
@@ -148,11 +148,10 @@ static system_config_t config = {
     .save_interval = 10
 };
 
-
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 
 // Time initialization
-#include "esp_sntp.h" // garanta que está incluído no topo do arquivo
+#include "esp_sntp.h"
 
 void init_time(void) {
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
@@ -160,37 +159,47 @@ void init_time(void) {
     esp_sntp_init();
 }
 
-float hx711_filtered_read(hx711_t *hx)
-{
-    const int N = 15;
-    float samples[N];
+float hx711_get_filtered_weight(void) {
+    float sum = 0;
+    float values[HX_SAMPLES];
 
-    for (int i = 0; i < N; i++) {
-        samples[i] = hx711_get_units(hx, 1);
+    for (int i = 0; i < HX_SAMPLES; i++) {
+        values[i] = hx711_get_units(&balanca, 1) * 1000.0f;
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 
-    // ordenar (bubble simples)
-    for (int i = 0; i < N - 1; i++) {
-        for (int j = 0; j < N - i - 1; j++) {
-            if (samples[j] > samples[j + 1]) {
-                float t = samples[j];
-                samples[j] = samples[j + 1];
-                samples[j + 1] = t;
-            }
-        }
+    // média simples
+    for (int i = 0; i < HX_SAMPLES; i++) {
+        sum += values[i];
     }
 
-    // descarta extremos (3 menores + 3 maiores)
-    float sum = 0;
-    int count = 0;
+    float avg = sum / HX_SAMPLES;
 
-    for (int i = 3; i < N - 3; i++) {
-        sum += samples[i];
-        count++;
+    // snap rápido para zero
+    if (fabs(avg) < 3.0f) {
+        hx_filtered = 0;
+        return 0;
     }
 
-    return (sum / count) * 1000.0f;
+    float diff = fabs(avg - hx_filtered);
+    float alpha = (diff > 10.0f) ? 0.9f : 0.2f;
+
+    // filtro exponencial (suaviza saltos)
+    if (!hx_initialized) {
+        hx_filtered = avg;
+        hx_initialized = true;
+    } else {
+        hx_filtered = alpha * avg + (1 - alpha) * hx_filtered;
+    }
+
+    // zona morta (evita tremor perto de 0)
+    if (fabs(hx_filtered) < 1.0f)
+        hx_filtered = 0;
+
+    if (hx_filtered > 5 && avg < 2)
+        hx_filtered = 0;
+
+    return hx_filtered;
 }
 
 // Manual
@@ -221,8 +230,7 @@ static void handle_manual_command(const char *payload) {
 }
 
 // Mqtt event handler
-static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
-{
+static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
 
         case MQTT_EVENT_CONNECTED:
@@ -376,7 +384,7 @@ static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t id, vo
 }
 
 // MQTT publish function
-static void mqtt_publish_sensors(float Temp, float humidity,
+static void mqtt_publish_sensors(float termistorTemp, float dhtTemp, float humidity,
     int luminosity, bool boia_acionada, float ration_weight) {
     if (!mqtt_client) return;
 
@@ -384,13 +392,15 @@ static void mqtt_publish_sensors(float Temp, float humidity,
 
     snprintf(payload, sizeof(payload),
         "{"
-        "\"temperature\":%.2f,"
+        "\"termistorTemp\":%.2f,"
+        "\"dhtTemp\":%.2f,"
         "\"humidity\":%.1f,"
         "\"luminosity\":%d,"
         "\"rationWeight\":%.2f,"
         "\"waterLevel\":%s"
         "}",
-        Temp,
+        termistorTemp,
+        dhtTemp,
         humidity,
         luminosity,
         ration_weight,
@@ -404,7 +414,7 @@ static void mqtt_publish_sensors(float Temp, float humidity,
 static const double beta = 3600.0;
 static const double r0   = 10000.0;
 static const double t0   = 273.15 + 25.0;
-static const double vcc  = 3.3; 
+static const double vcc  = 3.0; 
 static const double resistor = 10000.0;
 static const int    nAmostras = 5;
 
@@ -480,7 +490,30 @@ void check_ration_alert(float weight) {
     }
 }
 
-void control_fan_by_temperature(float avgTemp) {
+void control_fan_by_temperature(float termistorTemp, float dhtTemp) {
+    bool valid_termistor = termistorTemp > -10 && termistorTemp < 80;
+    bool valid_dht = !isnan(dhtTemp) && dhtTemp > -10 && dhtTemp < 80;
+
+    float avgTemp;
+
+    if (valid_termistor && valid_dht) {
+        avgTemp = (termistorTemp + dhtTemp) / 2.0f;
+    }
+    else if (valid_termistor) {
+        avgTemp = termistorTemp;
+        ESP_LOGW(TAG, "DHT inválido — usando termistor");
+    }
+    else if (valid_dht) {
+        avgTemp = dhtTemp;
+        ESP_LOGW(TAG, "Termistor inválido — usando DHT");
+    }
+    else {
+        // Falha total → modo segurança
+        ESP_LOGE(TAG, "FALHA NOS SENSORES — MODO SEGURANÇA");
+        gpio_set_level(RELE_VENTILADOR, 0);
+        fan_on = true;
+        return;
+    }
 
     // Liga quando atinge o máximo
     if (!fan_on && avgTemp >= config.temperature.max) {
@@ -612,8 +645,7 @@ void control_water_pump(bool boia_acionada) {
 }
 
 // dht 11 task
-static void dht_task(void *pv)
-{
+static void dht_task(void *pv) {
     float temp, hum;
 
     while (1) {
@@ -740,11 +772,7 @@ static void sensor_task(void *pv) {
 
     while (1) {
         // -------- HX711 --------
-        float weight = hx711_filtered_read(&balanca);
-        if (fabs(weight) < 2.0f)
-            weight = 0;
-        if (abs(weight) < 2)
-            hx711_tare(&balanca, 10);
+        float weight = hx711_get_filtered_weight();
         check_ration_alert(weight);
         ESP_LOGI(TAG, "Peso: %.2f g", weight);
 
@@ -760,9 +788,9 @@ static void sensor_task(void *pv) {
         double rt = resistor * ((vcc - v) / v);
 
         double tempK = 1.0 / ((1.0 / t0) + (1.0 / beta) * log(rt / r0));
-        double tempC = tempK - 273.15;
+        double termistorTemp = tempK - 273.15;
 
-        ESP_LOGI(TAG, "Termistor: %.2f °C", tempC);
+        ESP_LOGI(TAG, "Termistor: %.2f °C", termistorTemp);
 
         // Lê o valor do DHT11. Não chama dht11_read diretamente para evitar conflito.
         if (xSemaphoreTake(dht_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -774,16 +802,14 @@ static void sensor_task(void *pv) {
             dht_ok = false;
         }
 
-        float avgTemp = (float)tempC;
         if (dht_ok && !isnan(temp_dht)) {
-            avgTemp = ((float)tempC + temp_dht) / 2.0f;
             ESP_LOGI(TAG, "DHT11 -> Temp: %.1f °C | Umid: %.1f %%", temp_dht, hum_dht);
         } else {
             ESP_LOGW(TAG, "DHT11 sem leitura valida, usando termistor");
         }
 
         if (system_mode == MODE_AUTO) {
-            control_fan_by_temperature(avgTemp);
+            control_fan_by_temperature(termistorTemp, temp_dht);
         }
 
         // -------- LDR --------
@@ -800,14 +826,14 @@ static void sensor_task(void *pv) {
         }
 
         // -------- PUBLICA NO MQTT --------
-        mqtt_publish_sensors(avgTemp, dht_ok ? hum_dht : 0.0f, ldr_raw, boia_acionada, weight);
+        mqtt_publish_sensors(termistorTemp, temp_dht, dht_ok ? hum_dht : 0.0f, ldr_raw, boia_acionada, weight);
 
         vTaskDelay(pdMS_TO_TICKS(config.save_interval * 1000));
+        //vTaskDelay(pdMS_TO_TICKS(2 * 1000));
     }
 }
 
-void connect_wifi(void)
-{
+void connect_wifi(void) {
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -825,35 +851,34 @@ void connect_wifi(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-
 static void wifi_event_handler(void *arg,
     esp_event_base_t event_base,
     int32_t event_id,
     void *event_data)
 {
-if (event_base == WIFI_EVENT &&
-event_id == WIFI_EVENT_STA_START) {
-esp_wifi_connect();
-}
+    if (event_base == WIFI_EVENT &&
+        event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    }
 
-if (event_base == IP_EVENT &&
-event_id == IP_EVENT_STA_GOT_IP) {
+    if (event_base == IP_EVENT &&
+        event_id == IP_EVENT_STA_GOT_IP) {
 
-ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-ESP_LOGI("WIFI", "IP obtido: " IPSTR, IP2STR(&event->ip_info.ip));
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+        ESP_LOGI("WIFI", "IP obtido: " IPSTR, IP2STR(&event->ip_info.ip));
 
-if (!mqtt_started) {
-    ESP_LOGI("MQTT", "Iniciando MQTT");
-    esp_mqtt_client_start(mqtt_client);
-    mqtt_started = true;
-}
-}
+        if (!mqtt_started) {
+            ESP_LOGI("MQTT", "Iniciando MQTT");
+            esp_mqtt_client_start(mqtt_client);
+            mqtt_started = true;
+        }
+    }
 
-if (event_base == WIFI_EVENT &&
-event_id == WIFI_EVENT_STA_DISCONNECTED) {
-ESP_LOGW("WIFI", "WiFi desconectado, reconectando...");
-esp_wifi_connect();
-}
+    if (event_base == WIFI_EVENT &&
+        event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGW("WIFI", "WiFi desconectado, reconectando...");
+        esp_wifi_connect();
+    }
 }
 
 // Main
