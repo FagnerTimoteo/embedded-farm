@@ -4,6 +4,30 @@ Projeto desenvolvido com **ESP-IDF** para monitoramento e controle utilizando um
 
 O firmware realiza leitura de sensores e controle de atuadores, enviando dados para um broker MQTT para integração com sistemas de automação, dashboards ou backends.
 
+## Funcionalidades
+
+- Leitura de sensores (temperatura, umidade, etc.)
+- Controle de atuadores (ventiladores, luzes, bombas, relés)
+- Comunicação bidirecional via MQTT
+- Execução automática de rotinas configuráveis
+- Integração com backend para gerenciamento remoto
+
+## Arquitetura
+
+Sensores/Atuadores ⇄ ESP32 (embedded-farm) ⇄ MQTT ⇄ Backend
+
+## Integração
+
+Este firmware é utilizado em conjunto com:
+
+- Backend: https://github.com/FagnerTimoteo/granja-back
+- Frontend: https://github.com/joelrodriguesvieira/front-end-farm-management
+
+## Objetivo
+
+Permitir automação confiável, monitoramento em tempo real e controle
+remoto de equipamentos em ambientes de granja.
+
 ---
 
 # 📦 Requisitos
