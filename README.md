@@ -1,4 +1,4 @@
-# 🌱 Granja - Monitoramento com ESP32 (MQTT)
+# Granja - Monitoramento com ESP32 (MQTT)
 
 Projeto desenvolvido com **ESP-IDF** para monitoramento e controle utilizando um **ESP32** com comunicação via **MQTT**.
 
@@ -30,22 +30,22 @@ remoto de equipamentos em ambientes de granja.
 
 ---
 
-# 📦 Requisitos
+# Requisitos
 
 Antes de importar o projeto, instale:
 
-✅ ESP-IDF (mesma versão do projeto — recomendado 5.3.x)  
-✅ VSCode  
-✅ Extensão C/C++ (Microsoft)
-✅ Git
+ESP-IDF (mesma versão do projeto — recomendado 5.3.x)  
+VSCode  
+Extensão C/C++ (Microsoft)
+Git
 
 ---
 
-# ⬇️ 1. Instalar o ESP-IDF (Windows)
+# 1. Instalar o ESP-IDF (Windows)
 
 Baixe o instalador v5.3.X oficial:
 
-👉 https://dl.espressif.com/dl/esp-idf/
+https://dl.espressif.com/dl/esp-idf/
 
 
 Durante a instalação:
@@ -57,7 +57,7 @@ Durante a instalação:
 
 Após instalar, abra:
 
-👉 **ESP-IDF Command Prompt**
+**ESP-IDF Command Prompt**
 
 Teste:
 
@@ -68,13 +68,13 @@ Se aparecer a versão → OK.
 
 ---
 
-# ⬇️ 2. Baixar o projeto
+# 2. Baixar o projeto
 
 ```bash
 git clone https://github.com/FagnerTimoteo/embedded-farm.git
 cd embedded-farm
 
-🔧 3. Ativar ambiente ESP-IDF
+ 3. Ativar ambiente ESP-IDF
 
 Sempre rode antes de compilar:
 
@@ -83,9 +83,9 @@ C:\Espressif\frameworks\esp-idf-v5.3.1\export.bat
 
 Ou abra o projeto dentro do:
 
-👉 ESP-IDF Command Prompt
+ ESP-IDF Command Prompt
 
-⚙️ 4. Configurar projeto
+ 4. Configurar projeto
 
 Primeira vez após baixar:
 
@@ -107,10 +107,10 @@ Broker MQTT
 
 Porta MQTT
 
-🛠️ 5. Build
+5. Build
 idf.py build
 
-🚀 6. Flash no ESP32
+6. Flash no ESP32
 
 Conecte o ESP32 via USB:
 
@@ -126,7 +126,7 @@ Sair do monitor:
 
 Ctrl + ]
 
-🧠 7. Usar no VSCode (opcional)
+7. Usar no VSCode (opcional)
 
 Instale extensões:
 
@@ -146,7 +146,7 @@ Build:
 
 idf.py build
 
-🧹 Corrigir erros de IntelliSense no VSCode
+Corrigir erros de IntelliSense no VSCode
 
 Se aparecer:
 
@@ -179,7 +179,7 @@ Conteúdo:
 
 Reinicie o VSCode.
 
-📡 Funcionamento
+Funcionamento
 
 Após boot:
 
@@ -188,8 +188,8 @@ Após boot:
 ✔ publica dados dos sensores
 ✔ recebe comandos MQTT
 
-🧯 Solução de problemas
-❌ idf.py não reconhecido
+Solução de problemas
+X idf.py não reconhecido
 
 Execute:
 
@@ -198,7 +198,7 @@ export.bat
 
 ou abra o ESP-IDF Command Prompt.
 
-❌ Conflito de versões do IDF
+X Conflito de versões do IDF
 
 Apague:
 
@@ -210,18 +210,18 @@ Depois:
 idf.py fullclean
 idf.py build
 
-❌ IntelliSense vermelho mas build funciona
+X IntelliSense vermelho mas build funciona
 
 Ignore — é apenas VSCode.
 Siga a seção de IntelliSense acima.
 
-📁 Estrutura do projeto
+Estrutura do projeto
 embedded-farm/
  ├── main/
  ├── components/
  ├── CMakeLists.txt
  ├── sdkconfig
 
-👨‍💻 Autor
+Autor
 
 Fagner Timoteo
